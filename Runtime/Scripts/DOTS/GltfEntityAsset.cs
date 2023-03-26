@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 
-#if UNITY_DOTS_HYBRID
+#if UNITY_ENTITIES_GRAPHICS
 
 using System.IO;
 using System.Threading.Tasks;
