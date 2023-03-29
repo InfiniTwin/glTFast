@@ -24,6 +24,7 @@ using Unity.Rendering;
 using Unity.Transforms;
 using UnityEngine;
 using UnityEngine.Profiling;
+using UnityEngine.Rendering;
 
 namespace GLTFast {
     public class EntityInstantiator : IInstantiator {
@@ -68,17 +69,13 @@ namespace GLTFast {
             m_Nodes = new Dictionary<uint, Entity>();
             m_EntityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
             m_NodeArchetype = m_EntityManager.CreateArchetype(
-                typeof(Disabled),
-                typeof(Translation),
-                typeof(Rotation),
+                typeof(LocalTransform),
                 typeof(Parent),
-                typeof(LocalToParent),
                 typeof(LocalToWorld)
             );
             m_SceneArchetype = m_EntityManager.CreateArchetype(
-                typeof(Disabled),
-                typeof(Translation),
-                typeof(Rotation),
+                typeof(LocalTransform), 
+                typeof(Parent),
                 typeof(LocalToWorld)
             );
 
@@ -88,8 +85,7 @@ namespace GLTFast {
             }
             else {
                 var sceneEntity = m_EntityManager.CreateEntity(m_Parent==Entity.Null ? m_SceneArchetype : m_NodeArchetype);
-                m_EntityManager.SetComponentData(sceneEntity,new Translation {Value = new float3(0,0,0)});
-                m_EntityManager.SetComponentData(sceneEntity,new Rotation {Value = quaternion.identity});
+                m_EntityManager.SetComponentData(sceneEntity, LocalTransform.FromPositionRotation(new float3(0,0,0), quaternion.identity));
 #if UNITY_EDITOR
                 m_EntityManager.SetName(sceneEntity, name ?? "Scene");
 #endif
@@ -120,8 +116,7 @@ namespace GLTFast {
         ) {
             Profiler.BeginSample("CreateNode");
             var node = m_EntityManager.CreateEntity(m_NodeArchetype);
-            m_EntityManager.SetComponentData(node,new Translation {Value = position});
-            m_EntityManager.SetComponentData(node,new Rotation {Value = rotation});
+            m_EntityManager.SetComponentData(node, LocalTransform.FromPositionRotation(position, rotation));
             SetEntityScale(node, scale);
             m_Nodes[nodeIndex] = node;
             m_EntityManager.SetComponentData(
@@ -136,9 +131,10 @@ namespace GLTFast {
         void SetEntityScale(Entity node, Vector3 scale) {
             if (!scale.Equals(Vector3.one)) {
                 if (Math.Abs(scale.x - scale.y) < k_Epsilon && Math.Abs(scale.x - scale.z) < k_Epsilon) {
-                    m_EntityManager.AddComponentData(node, new Scale { Value = scale.x });
+                    m_EntityManager.AddComponentData(node, LocalTransform.FromScale (scale.x));
                 } else {
-                    m_EntityManager.AddComponentData(node, new NonUniformScale { Value = scale });
+                    // IMPROVE: Support uniform scale
+                    //m_EntityManager.AddComponentData(node, new NonUniformScale { Value = scale });
                 }
             }
         }
@@ -170,8 +166,7 @@ namespace GLTFast {
                 node = m_Nodes[nodeIndex];
             } else {
                 node = m_EntityManager.CreateEntity(m_NodeArchetype);
-                m_EntityManager.SetComponentData(node,new Translation {Value = new float3(0,0,0)});
-                m_EntityManager.SetComponentData(node,new Rotation {Value = quaternion.identity});
+                m_EntityManager.SetComponentData(node, LocalTransform.FromPositionRotation(new float3(0, 0, 0), quaternion.identity));
                 m_EntityManager.SetComponentData(node, new Parent { Value = m_Nodes[nodeIndex] });
             }
 
@@ -180,7 +175,20 @@ namespace GLTFast {
             for (var index = 0; index < materialIndices.Length; index++) {
                 var material = m_Gltf.GetMaterial(materialIndices[index]) ?? m_Gltf.GetDefaultMaterial();
 
-                RenderMeshUtility.AddComponents(node,m_EntityManager,new RenderMeshDescription(mesh,material,layer:m_Settings.Layer,subMeshIndex:index));
+				var renderMeshArray = new RenderMeshArray(new Material[] { material }, new Mesh[] { mesh });
+
+				var desc = new RenderMeshDescription(
+					layer: m_Settings.Layer,
+					shadowCastingMode: ShadowCastingMode.On,
+					receiveShadows: true);
+
+				RenderMeshUtility.AddComponents(
+					node,
+					m_EntityManager,
+					desc,
+					renderMeshArray,
+					MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
+
                  if(joints!=null || hasMorphTargets) {
                      if (joints != null) {
                          var bones = new Entity[joints.Length];
@@ -221,21 +229,32 @@ namespace GLTFast {
             foreach (var materialIndex in materialIndices) {
                 var material = m_Gltf.GetMaterial(materialIndex) ?? m_Gltf.GetDefaultMaterial();
                 material.enableInstancing = true;
-                var renderMeshDescription = new RenderMeshDescription(mesh, material, subMeshIndex:materialIndex);
                 var prototype = m_EntityManager.CreateEntity(m_NodeArchetype);
-                RenderMeshUtility.AddComponents(prototype,m_EntityManager,renderMeshDescription);
+				
+                var renderMeshArray = new RenderMeshArray(new Material[] { material }, new Mesh[] { mesh });
+
+				var desc = new RenderMeshDescription(
+					layer: m_Settings.Layer,
+					shadowCastingMode: ShadowCastingMode.On,
+					receiveShadows: true);
+
+				RenderMeshUtility.AddComponents(prototype,
+									m_EntityManager,
+									desc,
+									renderMeshArray,
+									MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
                 if (scales.HasValue) {
-                    m_EntityManager.AddComponent<NonUniformScale>(prototype);
+                    //m_EntityManager.AddComponent<NonUniformScale>(prototype);
                 }
                 for (var i = 0; i < instanceCount; i++) {
                     var instance = i>0 ? m_EntityManager.Instantiate(prototype) : prototype;
-                    m_EntityManager.SetComponentData(instance,new Translation {Value = positions?[i] ?? Vector3.zero });
-                    m_EntityManager.SetComponentData(instance,new Rotation {Value = rotations?[i] ?? Quaternion.identity});
+                    m_EntityManager.SetComponentData(instance, LocalTransform.FromPositionRotation(positions?[i] ?? Vector3.zero, rotations?[i] ?? Quaternion.identity));
                     m_EntityManager.SetComponentData(instance, new Parent { Value = m_Nodes[nodeIndex] });
                     if (scales.HasValue) {
-                        m_EntityManager.SetComponentData(instance, new NonUniformScale() { Value = scales.Value[i] });
-                    }
-                }
+						// IMPROVE: Support uniform scale
+						//m_EntityManager.SetComponentData(instance, new NonUniformScale() { Value = scales.Value[i] });
+					}
+				}
             }
             Profiler.EndSample();
         }
@@ -272,4 +291,4 @@ namespace GLTFast {
     }
 }
 
-#endif // UNITY_DOTS_HYBRID
+#endif // UNITY_ENTITIES_GRAPHICS

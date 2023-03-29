@@ -21,6 +21,7 @@ using GLTFast.Loading;
 using GLTFast.Logging;
 using GLTFast.Materials;
 using Unity.Burst;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Transforms;
 using UnityEngine;
@@ -119,9 +120,7 @@ namespace GLTFast {
         protected override IInstantiator GetDefaultInstantiator(ICodeLogger logger) {
             var entityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
             var sceneArchetype = entityManager.CreateArchetype(
-                typeof(Translation),
-                typeof(Rotation),
-                typeof(Scale),
+                typeof(LocalTransform),
                 typeof(LocalToWorld)
                 // typeof(LinkedEntityGroup)
             );
@@ -129,9 +128,8 @@ namespace GLTFast {
 #if UNITY_EDITOR
             entityManager.SetName(m_SceneRoot, string.IsNullOrEmpty(name) ? "glTF" : name);
 #endif
-            entityManager.SetComponentData(m_SceneRoot,new Translation {Value = transform.position});
-            entityManager.SetComponentData(m_SceneRoot,new Rotation {Value = transform.rotation});
-            entityManager.SetComponentData(m_SceneRoot,new Scale {Value = transform.localScale.x});
+            entityManager.SetComponentData(m_SceneRoot,
+                LocalTransform.FromPositionRotationScale(transform.position, transform.rotation, transform.localScale.x));
             // entityManager.AddBuffer<LinkedEntityGroup>(sceneRoot);
             return new EntityInstantiator(Importer, m_SceneRoot, logger, instantiationSettings);
         }
@@ -154,8 +152,7 @@ namespace GLTFast {
         static void DestroyEntityHierarchy(Entity rootEntity) {
             var world = World.DefaultGameObjectInjectionWorld;
             var entityManager = world.EntityManager;
-            var entityCommandBufferSystem = world.GetOrCreateSystem<BeginInitializationEntityCommandBufferSystem>();
-            var ecb = entityCommandBufferSystem.CreateCommandBuffer();
+			EntityCommandBuffer ecb = new EntityCommandBuffer(Allocator.TempJob);
 
             void DestroyEntity(Entity entity) {
                 if (entityManager.HasComponent<Child>(entity)) {
@@ -172,4 +169,4 @@ namespace GLTFast {
         }
     }
 }
-#endif // UNITY_DOTS_HYBRID
+#endif // UNITY_ENTITIES_GRAPHICS
